@@ -133,14 +133,42 @@ def _dibujar_cargas_eje(ax, est, ejes) -> None:
                 fontsize=8, color=COLOR_CARGA, fontweight="bold", zorder=7)
 
 
+def _dibujar_carga_uniforme(ax, est, w: Optional[float]) -> None:
+    """Carga distribuida roja sobre toda la viga: una fila de flechas cortas
+    hacia abajo unidas por una línea arriba (el símbolo clásico de "peine"
+    para una UDL), con el valor (Tnf/m) centrado encima.
+
+    Igual que `_dibujar_cargas_eje`, es ilustrativa de la MAGNITUD, no de un
+    patrón de carga concreto: la faja, por ejemplo, en el cálculo real
+    alterna de tramo en tramo según qué caso gobierne cada sección, pero acá
+    se dibuja entera para mostrar de un vistazo cuánto vale.
+    """
+    if not w or w <= 0:
+        return
+    n = max(6, min(18, int(est.L_total / 2.5)))
+    xs = np.linspace(0.0, est.L_total, n)
+    ax.plot([xs[0], xs[-1]], [Y_FLECHA_COLA, Y_FLECHA_COLA], color=COLOR_CARGA,
+            lw=1.3, zorder=7)
+    for x in xs:
+        ax.annotate("", xy=(x, Y_FLECHA_PUNTA), xytext=(x, Y_FLECHA_COLA),
+                    arrowprops=dict(arrowstyle="-|>", color=COLOR_CARGA, lw=1.3,
+                                    mutation_scale=10), zorder=7)
+    ax.text(0.5 * est.L_total, Y_FLECHA_TXT, "w = %.3f Tnf/m" % w,
+            ha="center", va="bottom", fontsize=8.5, color=COLOR_CARGA,
+            fontweight="bold", zorder=7)
+
+
 def dibujar_esquema(ax, est, mostrar_luces: bool = True,
-                    ejes_carga: Optional[list] = None) -> None:
+                    ejes_carga: Optional[list] = None,
+                    carga_uniforme: Optional[float] = None) -> None:
     """Viga, apoyos (articulado + deslizantes), rótulas y acotado de luces.
 
     `ejes_carga` (opcional): ejes de un vehículo (ver `Parametros.ejes_camion`)
     a dibujar como flechas rojas de carga puntual -- un esquema ilustrativo
     del vehículo de diseño, no una posición crítica de cálculo (ver
-    `_dibujar_cargas_eje`).
+    `_dibujar_cargas_eje`). `carga_uniforme` (opcional, Tnf/m): una carga
+    distribuida a dibujar en su lugar (ver `_dibujar_carga_uniforme`); se
+    ignora si ya se pasó `ejes_carga`.
     """
     ax.clear()
     x_der = est.L_total * 1.05
@@ -164,6 +192,8 @@ def dibujar_esquema(ax, est, mostrar_luces: bool = True,
 
     if ejes_carga:
         _dibujar_cargas_eje(ax, est, ejes_carga)
+    elif carga_uniforme:
+        _dibujar_carga_uniforme(ax, est, carga_uniforme)
 
     if est.rotulas:
         ax.plot(est.rotulas, np.zeros(len(est.rotulas)), "o",
@@ -470,12 +500,22 @@ def figura_envolvente(res, clave: str = "combinada", fig: Optional[Figure] = Non
         ejes_fig = fig.subplots(3, 1, gridspec_kw={"height_ratios": [0.8, 2, 2]})
         ax_esq, ax_v, ax_m = ejes_fig
         par = res.parametros
-        # El esquema de cargas siempre muestra el vehículo de diseño (el
-        # camión); si la envolvente que se está viendo es específicamente la
-        # del segundo vehículo, se ilustra ése en su lugar para no mostrar un
-        # camión que no tiene nada que ver con la curva de abajo.
-        ejes_veh = par.ejes_tandem if clave == "tandem" else par.ejes_camion
-        dibujar_esquema(ax_esq, est, ejes_carga=ejes_veh)
+        # El esquema de cargas ilustra la que corresponda a la envolvente que
+        # se está viendo: el segundo vehículo (tándem o carga militar) o el
+        # camión especial muestran sus propios ejes; la faja y el peso
+        # propio se dibujan como carga distribuida; cualquier otra
+        # envolvente (camión, especial vs. camión, combinada...) muestra el
+        # camión de diseño por default.
+        if clave == "tandem":
+            dibujar_esquema(ax_esq, est, ejes_carga=par.ejes_tandem)
+        elif clave == "especial":
+            dibujar_esquema(ax_esq, est, ejes_carga=res.ejes_especial)
+        elif clave == "carril":
+            dibujar_esquema(ax_esq, est, carga_uniforme=par.w_carril)
+        elif clave == "peso_propio":
+            dibujar_esquema(ax_esq, est, carga_uniforme=par.peso_propio_total())
+        else:
+            dibujar_esquema(ax_esq, est, ejes_carga=par.ejes_camion)
     else:
         ax_v, ax_m = fig.subplots(2, 1)
 
@@ -608,7 +648,7 @@ def figura_peso_propio_viga(res, activos: List[str], fig: Optional[Figure] = Non
     if con_esquema:
         ejes = fig.subplots(3, 1, gridspec_kw={"height_ratios": [0.8, 2, 2]})
         ax_esq, ax_v, ax_m = ejes
-        dibujar_esquema(ax_esq, est)
+        dibujar_esquema(ax_esq, est, carga_uniforme=res.parametros.peso_propio_total())
     else:
         ax_v, ax_m = fig.subplots(2, 1)
 

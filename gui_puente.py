@@ -314,6 +314,7 @@ class TablaEspecial(ttk.LabelFrame):
         b1.grid(row=2, column=0, columnspan=5, sticky="ew", pady=(4, 0))
         ttk.Button(b1, text="Agregar grupo...", command=self.agregar_grupo).pack(side="left")
         ttk.Button(b1, text="Agregar eje", width=11, command=self.agregar).pack(side="left", padx=3)
+        ttk.Button(b1, text="Importar Excel...", command=self.importar_excel).pack(side="left")
         b2 = ttk.Frame(self)
         b2.grid(row=3, column=0, columnspan=5, sticky="ew", pady=(3, 0))
         ttk.Button(b2, text="Modificar", width=10, command=self.modificar).pack(side="left")
@@ -450,6 +451,60 @@ class TablaEspecial(ttk.LabelFrame):
             return
         self.tree.delete(*self.tree.get_children())
         self._renumerar()
+
+    def importar_excel(self):
+        """Carga el convoy desde un Excel de dos columnas: «Separación» y
+        «Carga en eje» (cualquier nombre de encabezado sirve, se detecta por
+        posición). La separación de la primera fila se ignora -es el eje
+        delantero, sin eje anterior-, igual que en la tabla manual."""
+        ruta = filedialog.askopenfilename(
+            parent=self, filetypes=[("Excel", "*.xlsx *.xlsm"), ("Todos los archivos", "*.*")])
+        if not ruta:
+            return
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(ruta, data_only=True, read_only=True)
+            ws = wb.active
+            filas = [r for r in ws.iter_rows(values_only=True) if any(v is not None for v in r)]
+            wb.close()
+        except Exception as e:                          # noqa: BLE001
+            messagebox.showerror(APP, "No se pudo abrir el archivo:\n%s" % e, parent=self)
+            return
+        if not filas:
+            messagebox.showerror(APP, "El archivo está vacío.", parent=self)
+            return
+        # La primera fila es encabezado si su segunda columna no es un número
+        # (p.ej. "Separación" / "Carga en eje").
+        if len(filas[0]) < 2 or not isinstance(filas[0][1], (int, float)):
+            filas = filas[1:]
+        if not filas:
+            messagebox.showerror(
+                APP, "No se encontraron filas de datos: se esperan dos columnas, "
+                    "«Separación» y «Carga en eje».", parent=self)
+            return
+        try:
+            cargas = [float(r[1]) for r in filas]
+            seps = [float(r[0]) for r in filas[1:]]
+        except (TypeError, ValueError, IndexError):
+            messagebox.showerror(
+                APP, "No se entienden los datos: se esperan dos columnas numéricas, "
+                    "«Separación» y «Carga en eje» (la separación de la primera fila "
+                    "se ignora, es el eje delantero, sin eje anterior).", parent=self)
+            return
+        try:
+            ejes = mp.ejes_desde_separaciones(cargas, seps)
+            for e in ejes:
+                if e["P"] <= 0:
+                    raise ValueError("Las cargas de eje deben ser positivas.")
+        except ValueError as e:
+            messagebox.showerror(APP, str(e), parent=self)
+            return
+        self.cargar(ejes)
+        messagebox.showinfo(
+            APP, "Se importaron %d ejes desde «%s».\n\n"
+                "Recuerde marcar «Incluirlo en la envolvente gobernante» si quiere "
+                "que entre en el cálculo." % (len(ejes), os.path.basename(ruta)),
+            parent=self)
 
 
 # =============================================================================
