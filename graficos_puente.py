@@ -36,7 +36,11 @@ UNIDADES = {
 Y_LABEL = -0.65      # nombre del apoyo (A, B, C...)
 Y_EXT_INI = -0.80    # arranque de la línea de extensión de la cota
 Y_COTA = -1.05        # línea de cota (acotado de luces)
-Y_MIN, Y_MAX = -1.45, 1.35
+Y_MIN, Y_MAX = -1.45, 1.55
+Y_FLECHA_PUNTA = 0.03   # la punta de la flecha casi toca la viga, sin tapar la línea
+Y_FLECHA_COLA = 1.08    # arranque (cola) de la flecha de carga
+Y_FLECHA_TXT = 1.14     # etiqueta del valor, encima de la cola
+COLOR_CARGA = "red"
 
 
 def _dibujar_apoyo(ax, x: float, fijo: bool, esc: float) -> None:
@@ -78,10 +82,76 @@ def _dibujar_apoyo(ax, x: float, fijo: bool, esc: float) -> None:
         ax.plot([xi, xi - hw * 0.28], [y, y - 0.13], "k-", lw=0.7, zorder=3)
 
 
-def dibujar_esquema(ax, est, mostrar_luces: bool = True) -> None:
-    """Viga, apoyos (articulado + deslizantes), rótulas y acotado de luces."""
+def _rango_x_cargas(est, ejes):
+    """x del eje trasero y del eje delantero al dibujar el vehículo entero
+    recién entrando al puente (ver `_dibujar_cargas_eje`). Lo usa también
+    `dibujar_esquema` para asegurarse de que el eje X alcance a mostrar el
+    camión completo: con tramos cortos, el camión (que mide lo que mida,
+    fijo en metros según la norma) puede ser más largo que el propio puente,
+    y si el eje delantero quedara fuera del rango visible, su flecha no se
+    dibujaría nunca.
+    """
+    largo = -min(e["offset"] for e in ejes)
+    x_trasero = 0.04 * est.L_total
+    return x_trasero, x_trasero + largo
+
+
+def _dibujar_cargas_eje(ax, est, ejes) -> None:
+    """Flechas rojas sobre la viga: la carga de cada eje del vehículo,
+    apuntando hacia abajo (la rueda empuja la viga), con su valor en Tnf.
+
+    `ejes` son los ejes del vehículo tal cual vienen en `Parametros`
+    (offset <= 0, el eje delantero en offset=0): es sólo un esquema
+    ilustrativo de la carga de diseño, no la posición crítica de ningún
+    cálculo, así que el camión se dibuja entero y recién empezando a cruzar
+    el puente (el eje más trasero apenas adentro del primer apoyo) -- la
+    posición que de verdad gobierna cada sección ya se resuelve puntual a
+    punto en el barrido, no hace falta mostrarla acá. El vehículo (camión o
+    tándem) ya queda identificado en el título de la figura, así que acá no
+    se repite el nombre -junto a las flechas no hay dónde ponerlo sin que
+    choque con algún valor, sea cual sea la escala del puente.
+    """
+    if not ejes:
+        return
+    x_trasero, x_delantero = _rango_x_cargas(est, ejes)
+    # Si dos ejes quedan más cerca entre sí que lo que ocupa la etiqueta (p.ej.
+    # el tándem, a 1.22 m), el valor de uno se superpone con el del vecino:
+    # se alterna la altura de a dos para separarlos, igual que el abanico de
+    # las anotaciones de picos.
+    gap_min = 0.06 * est.L_total
+    alto = False
+    x_prev = None
+    for e in sorted(ejes, key=lambda e: x_delantero + e["offset"]):
+        x = x_delantero + e["offset"]
+        alto = (x_prev is not None and x - x_prev < gap_min and not alto)
+        x_prev = x
+        y_txt = Y_FLECHA_TXT + (0.16 if alto else 0.0)
+        ax.annotate("", xy=(x, Y_FLECHA_PUNTA), xytext=(x, Y_FLECHA_COLA),
+                    arrowprops=dict(arrowstyle="-|>", color=COLOR_CARGA, lw=1.8,
+                                    mutation_scale=14), zorder=7)
+        ax.text(x, y_txt, "%.2f Tnf" % e["P"], ha="center", va="bottom",
+                fontsize=8, color=COLOR_CARGA, fontweight="bold", zorder=7)
+
+
+def dibujar_esquema(ax, est, mostrar_luces: bool = True,
+                    ejes_carga: Optional[list] = None) -> None:
+    """Viga, apoyos (articulado + deslizantes), rótulas y acotado de luces.
+
+    `ejes_carga` (opcional): ejes de un vehículo (ver `Parametros.ejes_camion`)
+    a dibujar como flechas rojas de carga puntual -- un esquema ilustrativo
+    del vehículo de diseño, no una posición crítica de cálculo (ver
+    `_dibujar_cargas_eje`).
+    """
     ax.clear()
-    ax.set_xlim(-0.05 * est.L_total, est.L_total * 1.05)
+    x_der = est.L_total * 1.05
+    if ejes_carga:
+        # Si el vehículo es más largo que el puente (típico en tramos
+        # cortos: el camión mide lo que mida en metros, fijo por norma), el
+        # eje delantero puede caer más allá de L_total -- hay que ensanchar
+        # el rango visible o esa flecha no se vería nunca.
+        _, x_delantero_veh = _rango_x_cargas(est, ejes_carga)
+        x_der = max(x_der, x_delantero_veh * 1.05)
+    ax.set_xlim(-0.05 * est.L_total, x_der)
     ax.set_ylim(Y_MIN, Y_MAX)
     ax.axis("off")
 
@@ -91,6 +161,9 @@ def dibujar_esquema(ax, est, mostrar_luces: bool = True) -> None:
         _dibujar_apoyo(ax, a, fijo=(i == 0), esc=est.L_total)
         ax.text(a, Y_LABEL, est.nombres_apoyos[i], ha="center", va="center",
                 fontweight="bold", fontsize=10)
+
+    if ejes_carga:
+        _dibujar_cargas_eje(ax, est, ejes_carga)
 
     if est.rotulas:
         ax.plot(est.rotulas, np.zeros(len(est.rotulas)), "o",
@@ -394,9 +467,15 @@ def figura_envolvente(res, clave: str = "combinada", fig: Optional[Figure] = Non
     fig.clear()
 
     if con_esquema:
-        ejes = fig.subplots(3, 1, gridspec_kw={"height_ratios": [0.8, 2, 2]})
-        ax_esq, ax_v, ax_m = ejes
-        dibujar_esquema(ax_esq, est)
+        ejes_fig = fig.subplots(3, 1, gridspec_kw={"height_ratios": [0.8, 2, 2]})
+        ax_esq, ax_v, ax_m = ejes_fig
+        par = res.parametros
+        # El esquema de cargas siempre muestra el vehículo de diseño (el
+        # camión); si la envolvente que se está viendo es específicamente la
+        # del segundo vehículo, se ilustra ése en su lugar para no mostrar un
+        # camión que no tiene nada que ver con la curva de abajo.
+        ejes_veh = par.ejes_tandem if clave == "tandem" else par.ejes_camion
+        dibujar_esquema(ax_esq, est, ejes_carga=ejes_veh)
     else:
         ax_v, ax_m = fig.subplots(2, 1)
 
