@@ -1,0 +1,13 @@
+# Carpetas generadas por PyInstaller al compilar el .exe
+build/
+dist/
+
+# Cache de Python
+__pycache__/
+*.pyc
+
+# Salidas generadas por el programa (se regeneran con cualquier cálculo)
+Fuerzas Internas por Via.xlsx
+
+# Notas de trabajo de la sesión de desarrollo (no es documentación del proyecto)
+ONBOARDING.md
