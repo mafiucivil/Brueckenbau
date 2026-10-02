@@ -1314,6 +1314,7 @@ class Aplicacion(tk.Tk):
             sep_paso=parsear_num(self.var_spaso.get(), "Paso de la separación"),
             ejes_especial=self.tabla_especial.ejes(),
             incluir_especial=bool(self.var_incluir_esp.get()),
+            nombre_especial=getattr(self, "nombre_especial", "CAMIÓN ESPECIAL"),
             incluir_peso_propio=bool(self.var_pp_incluir.get()),
             ancho_tablero=parsear_num(self.var_pp_ancho.get(), "Ancho del tablero"),
             espesor_losa=parsear_num(self.var_pp_esplosa.get(), "Espesor de losa") / 100.0,
@@ -1340,6 +1341,7 @@ class Aplicacion(tk.Tk):
         self._escribir_carga_diseno(par)
         self.tabla_especial.cargar(par.ejes_especial)
         self.var_incluir_esp.set(bool(par.incluir_especial))
+        self.nombre_especial = par.nombre_especial
         self.var_pp_incluir.set(bool(par.incluir_peso_propio))
         self.var_pp_ancho.set("%g" % par.ancho_tablero)
         self.var_pp_esplosa.set("%g" % (par.espesor_losa * 100))
