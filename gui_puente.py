@@ -1711,6 +1711,7 @@ class Aplicacion(tk.Tk):
                  "sep_variable": par.sep_variable, "sep_min": par.sep_min,
                  "sep_max": par.sep_max, "sep_paso": par.sep_paso,
                  "ejes_especial": par.ejes_especial,
+                 "nombre_especial": par.nombre_especial,
                  "incluir_especial": par.incluir_especial,
                  "norma": par.norma, "nombre_camion": par.nombre_camion,
                  "usar_tandem": par.usar_tandem, "nombre_tandem": par.nombre_tandem,
@@ -1762,6 +1763,7 @@ class Aplicacion(tk.Tk):
                 sep_paso=float(d.get("sep_paso", 0.10)),
                 ejes_especial=[{"P": float(e["P"]), "offset": float(e["offset"])}
                                for e in d.get("ejes_especial", [])],
+                nombre_especial=d.get("nombre_especial", "CAMIÓN ESPECIAL"),
                 incluir_especial=bool(d.get("incluir_especial", False)),
                 norma=d.get("norma", mp.HS20_44),
                 nombre_camion=d.get("nombre_camion", "CAMIÓN"),

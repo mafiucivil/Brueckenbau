@@ -659,7 +659,9 @@ class Estructura:
         for P, xp in cargas_puntuales:
             por_barra.setdefault(self._barra_de(xp), []).append((P, xp))
 
-        for m in range(self.n_barras):
+        # Sin cargas uniformes, sólo las barras con carga puntual aportan algo.
+        barras = range(self.n_barras) if cargas_uniformes else sorted(por_barra)
+        for m in barras:
             L, x1, x2 = self.long_barra[m], self.nodos_x[m], self.nodos_x[m + 1]
             p = np.zeros(4)
             for P, xp in por_barra.get(m, ()):
@@ -711,13 +713,28 @@ class Estructura:
         izquierda, y así en x = L el cortante es el de diseño (-R_última) y no
         el cero de "fuera de la viga".
         """
+        escalones, rampas = self._bases_reacciones(X)
         V = np.zeros_like(X)
         M = np.zeros_like(X)
         for k in range(self.n_sup - 1):
-            V += R[k] * (X >= self.apoyos_x[k] - 1e-7)
-            M += R[k] * np.maximum(0, X - self.apoyos_x[k])
-        M += R[-1] * np.maximum(0, X - self.apoyos_x[-1])
+            V += R[k] * escalones[k]
+            M += R[k] * rampas[k]
+        M += R[-1] * rampas[-1]
         return V, M
+
+    def _bases_reacciones(self, X: np.ndarray):
+        """Escalones y rampas por apoyo, cacheados por identidad de la grilla X.
+
+        X y la geometría no cambian durante un cálculo; recalcularlos en cada
+        posición del vehículo era el costo dominante.
+        """
+        cache = getattr(self, "_cache_bases", None)
+        if cache is not None and cache[0] is X:
+            return cache[1], cache[2]
+        escalones = [X >= self.apoyos_x[k] - 1e-7 for k in range(self.n_sup - 1)]
+        rampas = [np.maximum(0, X - self.apoyos_x[k]) for k in range(self.n_sup)]
+        self._cache_bases = (X, escalones, rampas)
+        return escalones, rampas
 
     def fuerzas_carril(self, X: np.ndarray, tramos_cargados, w: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         cargas_u = [(self.apoyos_x[k], self.apoyos_x[k + 1], w)
