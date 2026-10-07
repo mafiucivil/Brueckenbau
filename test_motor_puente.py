@@ -1035,6 +1035,33 @@ chequear("pp_total con baranda «ninguna» sigue siendo viga+losa+carpeta (+0 de
                           + r_pv_ninguna.envolventes["pp_losa"].M_max
                           + r_pv_ninguna.envolventes["pp_carpeta"].M_max))) < 5e-3)
 
+# --- T12: factores de la vista (impacto / distribución / mayoración)
+def _igual(a, b):
+    return (np.array_equal(a.V_max, b.V_max) and np.array_equal(a.M_max, b.M_max)
+            and np.array_equal(a.V_min, b.V_min) and np.array_equal(a.M_min, b.M_min))
+
+for etq, kw in (("alternativa", {}), ("suma", {"modo_combinacion": "suma"})):
+    pf = mp.aplicar_norma(mp.Parametros(tramos=[10, 12, 10], dx=0.1), mp.HS20_44)
+    for _k, _v in kw.items():
+        setattr(pf, _k, _v)
+    pf.incluir_distribucion = True
+    pf.tipo_viga = "acero"; pf.separacion_vigas = 2.0; pf.n_vias_diseno = 2
+    rf = mp.calcular(pf)
+    v = rf.con_factores(True, True, True)
+    chequear("T12 %s: todo prendido == combinada original con g (viga_interior)" % etq,
+             _igual(v.envolventes["combinada"], rf.envolventes["viga_interior"]))
+    v2 = rf.con_factores(True, False, True)
+    chequear("T12 %s: impacto+mayoración sin g == combinada original" % etq,
+             _igual(v2.envolventes["combinada"], rf.envolventes["combinada"]))
+    v0 = rf.con_factores(False, False, False)
+    cv = rf.base_cvt
+    esperado = (np.maximum(cv[3], rf.base_viva["carril"][3]) if etq == "alternativa"
+                else cv[3] + rf.base_viva["carril"][3])
+    chequear("T12 %s: todo apagado == crudo (M sin impacto, sin 1.20, sin g)" % etq,
+             np.max(np.abs(v0.envolventes["combinada"].M_max - esperado)) < 1e-3)
+    chequear("T12 %s: la vista no muestra viga_interior" % etq,
+             "viga_interior" not in v2.envolventes)
+
 print()
 print("=" * 78)
 print("RESULTADO: " + ("TODOS LOS TESTS PASARON" if not fallos else "FALLARON -> %s" % fallos))

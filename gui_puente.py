@@ -864,6 +864,23 @@ class Aplicacion(tk.Tk):
         self.cb_unidad_g.bind("<<ComboboxSelected>>", lambda _: self.redibujar())
         ttk.Button(cab, text="Guardar PNG", command=self.exportar_png).pack(side="right")
 
+        # Factores sobre la carga viva: por defecto NO se aplican (resultado crudo).
+        cab2 = ttk.Frame(tab_g, padding=(6, 0, 6, 4))
+        cab2.pack(fill="x")
+        ttk.Label(cab2, text="Incluir en la carga viva:").pack(side="left")
+        self.var_f_imp = tk.BooleanVar(value=False)
+        self.var_f_dist = tk.BooleanVar(value=False)
+        self.var_f_may = tk.BooleanVar(value=False)
+        self.chk_f_imp = ttk.Checkbutton(cab2, text="Coef. de impacto", variable=self.var_f_imp,
+                                         command=self._refrescar_vista)
+        self.chk_f_dist = ttk.Checkbutton(cab2, text="Coef. de distribución (g)",
+                                          variable=self.var_f_dist, command=self._refrescar_vista)
+        self.chk_f_may = ttk.Checkbutton(cab2, text="Mayoración (Chile, x1.20)",
+                                         variable=self.var_f_may, command=self._refrescar_vista)
+        for c in (self.chk_f_imp, self.chk_f_dist, self.chk_f_may):
+            c.pack(side="left", padx=8)
+        self.res_base = None
+
         self.figura = Figure(figsize=(9, 6.5))
         self.lienzo = FigureCanvasTkAgg(self.figura, master=tab_g)
         barra_mpl = NavigationToolbar2Tk(self.lienzo, tab_g, pack_toolbar=False)
@@ -1429,8 +1446,40 @@ class Aplicacion(tk.Tk):
         self.btn_cancelar.configure(state="disabled")
         self.var_estado.set(mensaje)
 
+    def _vista(self, res):
+        """Resultados con los factores que marcó el usuario (cheap: sin barrido)."""
+        dist_ok = bool(res.dist_g)
+        return res.con_factores(impacto=self.var_f_imp.get(),
+                                distribucion=self.var_f_dist.get() and dist_ok,
+                                mayoracion=self.var_f_may.get())
+
+    def _estado_checks_factores(self, res):
+        self.chk_f_dist.configure(state="normal" if res.dist_g else "disabled")
+        if not res.dist_g:
+            self.var_f_dist.set(False)
+
+    def _refrescar_vista(self):
+        if self.res_base is None:
+            return
+        claves = [self._clave(v) for v in (self.var_caso_g, self.var_caso_t)]
+        self.resultados = self._vista(self.res_base)
+        etiquetas = [c[0] for c in self._casos()]
+        self.cb_g.configure(values=etiquetas)
+        self.cb_t.configure(values=etiquetas)
+        for var, k in zip((self.var_caso_g, self.var_caso_t), claves):
+            var.set(self.resultados.envolventes[k].titulo if k in self.resultados.envolventes
+                    else etiquetas[0])
+        self.redibujar()
+        self.redibujar_pp_viga()
+        self.llenar_resumen()
+        self.llenar_tabla()
+        self.txt.delete("1.0", "end")
+        self.txt.insert("1.0", self.resultados.texto_resumen())
+
     def _al_terminar(self, res):
-        self.resultados = res
+        self.res_base = res
+        self._estado_checks_factores(res)
+        self.resultados = res = self._vista(res)
         self.progreso["value"] = 100
         avisos = res.estructura.avisos
         msg = "Cálculo terminado.  %s" % res.estructura.descripcion().splitlines()[-1]

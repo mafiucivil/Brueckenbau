@@ -12,7 +12,7 @@ Este módulo no dibuja ni escribe archivos: sólo calcula. Lo usan tanto
 gui_puente.py (interfaz gráfica) como carga_viva_vias_puentes.py (script).
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import List, Dict, Optional, Callable, Sequence, Tuple
 
 import numpy as np
@@ -826,6 +826,18 @@ class Resultados:
     # en `calcular`). Envolventes sin vehículo (carril, peso_propio,
     # viga_interior) no tienen entrada aquí.
     direccion_M: Dict[str, Dict[str, np.ndarray]] = field(default_factory=dict)
+    # Datos CRUDOS de la carga viva (sin impacto, sin mayoración, sin g), para
+    # que la vista pueda prender/apagar cada factor sin recalcular el barrido:
+    # clave -> (título, V_max, V_min, M_max, M_min, R_pos, R_neg). `base_cvt`
+    # es el vehículo gobernante aunque haya uno solo (en ese caso "cvt" no
+    # aparece en `envolventes`, pero la combinada igual lo necesita).
+    base_viva: Dict[str, tuple] = field(default_factory=dict)
+    base_cvt: Optional[tuple] = None
+    fd_x: Optional[np.ndarray] = None
+    titulo_cvt: str = ""
+    imp_txt: str = ""
+    # Qué factores tiene aplicados esta vista (None = los de `calcular`).
+    factores: Optional[Dict[str, bool]] = None
 
     def texto_carga_diseno(self) -> str:
         """Descripción de la carga de diseño usada, para el reporte."""
@@ -840,6 +852,12 @@ class Resultados:
             out.append("%s: %s a %.4f m" % (
                 par.nombre_tandem, ", ".join("%.3f Tnf" % e["P"] for e in par.ejes_tandem),
                 -par.ejes_tandem[-1]["offset"]))
+        if self.factores is not None:
+            _on = lambda b: "SÍ" if b else "NO"
+            out.append("Factores aplicados a la carga viva en estos resultados:  "
+                       "impacto = %s   |   coef. distribución g = %s   |   mayoración = %s"
+                       % (_on(self.factores["impacto"]), _on(self.factores["distribucion"]),
+                          _on(self.factores["mayoracion"])))
         _vehs = ["camión"]
         if par.usar_tandem:
             _vehs.append(par.nombre_tandem.lower())
@@ -929,6 +947,71 @@ class Resultados:
         posibles = ["camion", "tandem", "especial", "cvt", "carril", "peso_propio",
                    "combinada", "viga_interior"]
         return [k for k in posibles if k in self.envolventes]
+
+    def con_factores(self, impacto: bool = True, distribucion: bool = True,
+                     mayoracion: bool = True) -> "Resultados":
+        """Vista de las envolventes de carga viva con cada factor prendido o
+        apagado, SIN recalcular el barrido: usa los datos crudos que dejó
+        `calcular`.
+
+        - `impacto`: 1+I (o 1.33) sólo en la combinada, como siempre.
+        - `mayoracion`: `factor_mayoracion` sobre toda la carga viva.
+        - `distribucion`: g = S/D sobre el MOMENTO de toda la carga viva (el
+          corte y las reacciones quedan por vía completa). Sólo existe si el
+          cálculo se hizo con `incluir_distribucion`; si no, se ignora.
+        En esta vista no aparece la envolvente aparte "viga_interior": su
+        lugar lo toma el factor g. El peso propio no lleva ninguno.
+        Con los tres prendidos, las envolventes de carga viva coinciden bit a
+        bit con las de `calcular` (y "combinada" con g, con "viga_interior").
+        """
+        if not self.base_viva or self.base_cvt is None:
+            return self
+        par, est, X = self.parametros, self.estructura, self.X
+        fm = par.factor_mayoracion if mayoracion else 1.0
+        fdx = self.fd_x if impacto else np.ones_like(X)
+        fdR = (self.impacto_apoyos if impacto
+               else {i: 1.0 for i in range(est.n_sup)})
+        g = self.dist_g if (distribucion and self.dist_g) else None
+        n = est.n_sup
+
+        _, Vcx, Vcn, Mcx, Mcn, Rpc, Rnc = self.base_cvt
+        _, Vkx, Vkn, Mkx, Mkn, Rpk, Rnk = self.base_viva["carril"]
+        if par.modo_combinacion == "alternativa":
+            Vx = np.round(fdx * np.maximum(Vcx, Vkx), 3)
+            Vn = np.round(fdx * np.minimum(Vcn, Vkn), 3)
+            Mx = np.round(fdx * np.maximum(Mcx, Mkx), 3)
+            Mn = np.round(fdx * np.minimum(Mcn, Mkn), 3)
+            Rp = {i: fdR[i] * max(Rpc[i], Rpk[i]) for i in range(n)}
+            Rn = {i: fdR[i] * min(Rnc[i], Rnk[i]) for i in range(n)}
+            tit = ("%s x máx(%s ; Faja)" % (self.imp_txt, self.titulo_cvt) if impacto
+                   else "máx(%s ; Faja)" % self.titulo_cvt)
+        else:
+            Vx = np.round(fdx * Vcx + Vkx, 3)
+            Vn = np.round(fdx * Vcn + Vkn, 3)
+            Mx = np.round(fdx * Mcx + Mkx, 3)
+            Mn = np.round(fdx * Mcn + Mkn, 3)
+            Rp = {i: fdR[i] * Rpc[i] + Rpk[i] for i in range(n)}
+            Rn = {i: fdR[i] * Rnc[i] + Rnk[i] for i in range(n)}
+            tit = ("%s(%s) + Carril" % (self.imp_txt, self.titulo_cvt) if impacto
+                   else "(%s) + Carril" % self.titulo_cvt)
+
+        vivas = dict(self.base_viva)
+        vivas["combinada"] = (tit, Vx, Vn, Mx, Mn, Rp, Rn)
+        envs = {}
+        for clave, (titulo, Vx, Vn, Mx, Mn, Rp, Rn) in vivas.items():
+            Vx, Vn, Mx, Mn = (np.round(fm * a, 3) for a in (Vx, Vn, Mx, Mn))
+            Rp = {i: fm * v for i, v in dict(Rp).items()}
+            Rn = {i: fm * v for i, v in dict(Rn).items()}
+            if g is not None:
+                Mx, Mn = np.round(Mx * g, 3), np.round(Mn * g, 3)
+            envs[clave] = Envolvente(titulo, Vx, Vn, Mx, Mn, Rp, Rn,
+                                     _resumen(est, X, Vx, Vn, Mx, Mn))
+        for k, v in self.envolventes.items():     # peso propio y sus partidas
+            if k not in vivas and k != "viga_interior":
+                envs[k] = v
+        return replace(self, envolventes=envs,
+                       factores={"impacto": impacto, "distribucion": g is not None,
+                                 "mayoracion": mayoracion})
 
     @property
     def componentes_pp_viga(self) -> List[str]:
@@ -1547,7 +1630,12 @@ def calcular(par: Parametros, progreso: Optional[Callable[[float, str], bool]] =
                       if par.impacto_modo != "fijo" else [par.factor_dinamico] * est.n_tramos,
                       impacto_apoyos=dict(fd_R),
                       dist_g=dist_g, dist_D=dist_D, dist_S_ft=dist_S_ft, dist_aviso=dist_aviso,
-                      direccion_M=direccion_M)
+                      direccion_M=direccion_M,
+                      base_viva={c[0]: (c[1],) + tuple(c[2:]) for c in crudas
+                                 if c[0] != "combinada"},
+                      base_cvt=(titulo_cvt, Vcvt_max, Vcvt_min, Mcvt_max, Mcvt_min,
+                                Rp_cvt, Rn_cvt),
+                      fd_x=fd_x, titulo_cvt=titulo_cvt, imp_txt=imp)
 
 
 class CalculoCancelado(Exception):
