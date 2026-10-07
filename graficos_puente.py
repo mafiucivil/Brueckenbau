@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 Gráficos de envolventes de carga viva.
 
@@ -36,10 +36,10 @@ UNIDADES = {
 Y_LABEL = -0.65      # nombre del apoyo (A, B, C...)
 Y_EXT_INI = -0.80    # arranque de la línea de extensión de la cota
 Y_COTA = -1.05        # línea de cota (acotado de luces)
-Y_MIN, Y_MAX = -1.45, 1.55
+Y_MIN, Y_MAX = -1.45, 2.45
 Y_FLECHA_PUNTA = 0.03   # la punta de la flecha casi toca la viga, sin tapar la línea
-Y_FLECHA_COLA = 1.08    # arranque (cola) de la flecha de carga
-Y_FLECHA_TXT = 1.14     # etiqueta del valor, encima de la cola
+Y_FLECHA_COLA = 2.00    # arranque (cola) de la flecha de carga
+Y_FLECHA_TXT = 2.06     # etiqueta del valor, encima de la cola
 COLOR_CARGA = "red"
 
 
@@ -114,23 +114,17 @@ def _dibujar_cargas_eje(ax, est, ejes, factor: float = 1.0, uf: str = "Tnf") -> 
     if not ejes:
         return
     x_trasero, x_delantero = _rango_x_cargas(est, ejes)
-    # Si dos ejes quedan más cerca entre sí que lo que ocupa la etiqueta (p.ej.
-    # el tándem, a 1.22 m), el valor de uno se superpone con el del vecino:
-    # se alterna la altura de a dos para separarlos, igual que el abanico de
-    # las anotaciones de picos.
-    gap_min = 0.06 * est.L_total
-    alto = False
-    x_prev = None
+    # El valor va girado 90° pegado a la derecha de la flecha: así cabe aunque
+    # haya muchos ejes juntos (camiones especiales) sin pisarse con el vecino.
     for e in sorted(ejes, key=lambda e: x_delantero + e["offset"]):
         x = x_delantero + e["offset"]
-        alto = (x_prev is not None and x - x_prev < gap_min and not alto)
-        x_prev = x
-        y_txt = Y_FLECHA_TXT + (0.16 if alto else 0.0)
         ax.annotate("", xy=(x, Y_FLECHA_PUNTA), xytext=(x, Y_FLECHA_COLA),
                     arrowprops=dict(arrowstyle="-|>", color=COLOR_CARGA, lw=1.8,
                                     mutation_scale=14), zorder=7)
-        ax.text(x, y_txt, "%.2f %s" % (e["P"] * factor, uf), ha="center", va="bottom",
-                fontsize=8, color=COLOR_CARGA, fontweight="bold", zorder=7)
+        ax.annotate("%.2f %s" % (e["P"] * factor, uf), xy=(x, Y_FLECHA_COLA),
+                    xytext=(3, 0), textcoords="offset points", rotation=90,
+                    ha="left", va="top", fontsize=8, color=COLOR_CARGA,
+                    fontweight="bold", zorder=7)
 
 
 def _dibujar_carga_uniforme(ax, est, w: Optional[float],
@@ -499,7 +493,7 @@ def figura_envolvente(res, clave: str = "combinada", fig: Optional[Figure] = Non
     fig.clear()
 
     if con_esquema:
-        ejes_fig = fig.subplots(3, 1, gridspec_kw={"height_ratios": [0.8, 2, 2]})
+        ejes_fig = fig.subplots(3, 1, gridspec_kw={"height_ratios": [1.5, 2, 2]})
         ax_esq, ax_v, ax_m = ejes_fig
         par = res.parametros
         # El esquema de cargas ilustra la que corresponda a la envolvente que
@@ -648,7 +642,7 @@ def figura_peso_propio_viga(res, activos: List[str], fig: Optional[Figure] = Non
     fig.clear()
 
     if con_esquema:
-        ejes = fig.subplots(3, 1, gridspec_kw={"height_ratios": [0.8, 2, 2]})
+        ejes = fig.subplots(3, 1, gridspec_kw={"height_ratios": [1.5, 2, 2]})
         ax_esq, ax_v, ax_m = ejes
         dibujar_esquema(ax_esq, est, carga_uniforme=res.parametros.peso_propio_total(), factor=factor, uf=uf)
     else:
