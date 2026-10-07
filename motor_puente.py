@@ -954,7 +954,8 @@ class Resultados:
         apagado, SIN recalcular el barrido: usa los datos crudos que dejó
         `calcular`.
 
-        - `impacto`: 1+I (o 1.33) sólo en la combinada, como siempre.
+        - `impacto`: 1+I (o 1.33) en el vehículo (camión, tándem, especial, cvt) y en
+          la combinada; nunca en la faja de carril.
         - `mayoracion`: `factor_mayoracion` sobre toda la carga viva.
         - `distribucion`: g = S/D sobre el MOMENTO de toda la carga viva (el
           corte y las reacciones quedan por vía completa). Sólo existe si el
@@ -999,6 +1000,11 @@ class Resultados:
         vivas["combinada"] = (tit, Vx, Vn, Mx, Mn, Rp, Rn)
         envs = {}
         for clave, (titulo, Vx, Vn, Mx, Mn, Rp, Rn) in vivas.items():
+            if impacto and clave in ("camion", "tandem", "especial", "cvt"):
+                Vx, Vn, Mx, Mn = (np.round(fdx * a, 3) for a in (Vx, Vn, Mx, Mn))
+                Rp = {i: fdR[i] * v for i, v in dict(Rp).items()}
+                Rn = {i: fdR[i] * v for i, v in dict(Rn).items()}
+                titulo = "%s x %s" % (self.imp_txt, titulo)
             Vx, Vn, Mx, Mn = (np.round(fm * a, 3) for a in (Vx, Vn, Mx, Mn))
             Rp = {i: fm * v for i, v in dict(Rp).items()}
             Rn = {i: fm * v for i, v in dict(Rn).items()}
