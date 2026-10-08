@@ -153,6 +153,94 @@ def factor_distribucion_momento(tipo_viga: str, separacion_m: float,
     return g, D, S_ft, aviso
 
 
+_ANCHO_VIA = 12.0 * PIE          # 12 ft, ancho de una vía de diseño (Art. 3.6.1.1.1)
+_RUEDA_BORDE = 2.0 * PIE         # rueda exterior a 2 ft de la cara de la barrera
+_SEP_RUEDAS = 6.0 * PIE          # 6 ft entre líneas de rueda (Art. 3.6.1.2.2)
+
+
+def _m_presencia(n_vias: int) -> float:
+    """Factor de presencia múltiple (Tabla 3.6.1.1.2-1)."""
+    return {1: 1.20, 2: 1.00, 3: 0.85}.get(n_vias, 0.65)
+
+
+def factores_distribucion_lrfd(par: "Parametros") -> dict:
+    """Coeficientes de distribución de AASHTO LRFD (Art. 4.6.2.2) para losa de
+    hormigón sobre vigas I/T (tipos a, e, k de la Tabla 4.6.2.2.1-1), por vía
+    de carga y con el factor de presencia múltiple YA incluido (no se vuelve a
+    aplicar). Devuelve {"interior": {"gM","gV"}, "exterior": {"gM","gV"},
+    "detalle": [líneas], "avisos": [str], "L", "Kg"}.
+
+    Interior: gM = máx(1 vía, 2+ vías) de la Tabla 4.6.2.2.2b-1 y gV de la
+    4.6.2.2.3a-1. Exterior: máx(regla de la palanca con m=1.20, e·g de las
+    Tablas 4.6.2.2.2d-1 / 4.6.2.2.3b-1 y, si hay diafragmas, el cuerpo rígido
+    del comentario C4.6.2.2.2d)."""
+    S = par.separacion_vigas / PIE
+    L = (par.L_dist if par.L_dist > 0 else float(np.mean(par.tramos))) / PIE
+    ts_in = par.ts_dist / 0.0254
+    Kg_m4 = par.n_mod * (par.Ig_dist + par.Ag_dist * par.eg_dist ** 2)
+    Kg_in4 = Kg_m4 / 0.0254 ** 4
+    de_ft = par.de_dist / PIE
+    avisos = []
+    if not 3.5 <= S <= 16.0:
+        avisos.append("S = %.2f ft fuera de 3.5–16 ft (Tabla 4.6.2.2.2b-1)." % S)
+    if not 20.0 <= L <= 240.0:
+        avisos.append("L = %.1f ft fuera de 20–240 ft (Tabla 4.6.2.2.2b-1)." % L)
+    if not 4.5 <= ts_in <= 12.0:
+        avisos.append("ts = %.2f in fuera de 4.5–12 in (Tabla 4.6.2.2.2b-1)." % ts_in)
+    if par.nb_dist < 4:
+        avisos.append("Nb = %d < 4 (Tabla 4.6.2.2.2b-1)." % par.nb_dist)
+    if not 1.0e4 <= Kg_in4 <= 7.0e6:
+        avisos.append("Kg = %.0f in4 fuera de 10 000–7 000 000 in4 (Tabla 4.6.2.2.2b-1)." % Kg_in4)
+    if not -1.0 <= de_ft <= 5.5:
+        avisos.append("de = %.2f ft fuera de −1.0–5.5 ft (Tabla 4.6.2.2.2d-1)." % de_ft)
+
+    rig = (Kg_in4 / (12.0 * L * ts_in ** 3)) ** 0.1
+    gM1 = 0.06 + (S / 14.0) ** 0.4 * (S / L) ** 0.3 * rig
+    gM2 = 0.075 + (S / 9.5) ** 0.6 * (S / L) ** 0.2 * rig
+    gV1 = 0.36 + S / 25.0
+    gV2 = 0.20 + S / 12.0 - (S / 35.0) ** 2
+    gM_int, gV_int = max(gM1, gM2), max(gV1, gV2)
+
+    x1 = _RUEDA_BORDE - par.de_dist
+    x2 = x1 + _SEP_RUEDAS
+    ordenada = lambda x: max(0.0, (par.separacion_vigas - x) / par.separacion_vigas)
+    g_palanca = 1.20 * 0.5 * (ordenada(x1) + ordenada(x2))
+    eM, eV = 0.77 + de_ft / 9.1, 0.60 + de_ft / 10.0
+    gM_e, gV_e = eM * gM2, eV * gV2
+    g_rigido, nl_rigido = 0.0, 0
+    if par.diafragmas and par.w_calzada > 0 and par.nb_dist >= 2:
+        nl_max = int(par.w_calzada / _ANCHO_VIA)
+        Xext = (par.nb_dist - 1) * par.separacion_vigas / 2.0
+        sx2 = sum(((j - (par.nb_dist - 1) / 2.0) * par.separacion_vigas) ** 2
+                  for j in range(par.nb_dist))
+        sum_e = 0.0
+        for nl in range(1, nl_max + 1):
+            sum_e += (par.w_calzada / 2.0 - (_RUEDA_BORDE + _SEP_RUEDAS / 2.0)
+                      - _ANCHO_VIA * (nl - 1))
+            g = _m_presencia(nl) * (nl / par.nb_dist + Xext * sum_e / sx2)
+            if g > g_rigido:
+                g_rigido, nl_rigido = g, nl
+    gM_ext = max(g_palanca, gM_e, g_rigido)
+    gV_ext = max(g_palanca, gV_e, g_rigido)
+    detalle = [
+        "Viga interior (Tablas 4.6.2.2.2b-1 y 4.6.2.2.3a-1):  S = %.2f ft, L = %.2f ft, "
+        "ts = %.2f in, Kg = %.0f in4" % (S, L, ts_in, Kg_in4),
+        "   gM: 1 vía = %.4f ; 2+ vías = %.4f  ->  gM = %.4f" % (gM1, gM2, gM_int),
+        "   gV: 1 vía = %.4f ; 2+ vías = %.4f  ->  gV = %.4f" % (gV1, gV2, gV_int),
+        "Viga exterior (de = %.3f m = %.3f ft):" % (par.de_dist, de_ft),
+        "   regla de la palanca (1 vía, m = 1.20) = %.4f" % g_palanca,
+        "   e·g (2+ vías):  gM = %.4f x %.4f = %.4f ;  gV = %.4f x %.4f = %.4f"
+        % (eM, gM2, gM_e, eV, gV2, gV_e),
+    ]
+    if g_rigido > 0:
+        detalle.append("   cuerpo rígido (diafragmas, NL = %d) = %.4f" % (nl_rigido, g_rigido))
+    detalle.append("   adoptado:  gM = %.4f ;  gV = %.4f" % (gM_ext, gV_ext))
+    return {"interior": {"gM": gM_int, "gV": gV_int},
+            "exterior": {"gM": gM_ext, "gV": gV_ext},
+            "palanca": g_palanca, "rigido": g_rigido, "detalle": detalle,
+            "avisos": avisos, "L": L * PIE, "Kg": Kg_m4}
+
+
 # =============================================================================
 # PARÁMETROS DE ENTRADA
 # =============================================================================
@@ -247,6 +335,20 @@ class Parametros:
     tipo_viga: str = "acero"        # "hormigon" | "acero"
     separacion_vigas: float = 2.0   # m, separación S entre ejes de vigas
     n_vias_diseno: int = 2          # 1, o 2 (representa "2 o más")
+    # AASHTO LRFD (Art. 4.6.2.2): sólo se usan con norma HL-93. Reemplazan al
+    # método S/D y entregan factores de momento Y de corte, viga interior y
+    # exterior (el factor de presencia múltiple ya viene incluido).
+    ts_dist: float = 0.20           # m, espesor de losa
+    L_dist: float = 0.0             # m, luz para la fórmula (0 = promedio de las luces)
+    n_mod: float = 1.0              # relación modular viga/losa
+    Ig_dist: float = 0.0            # m4, inercia propia de la viga
+    Ag_dist: float = 0.0            # m2, área de la viga
+    eg_dist: float = 0.0            # m, distancia entre centroides viga-losa
+    nb_dist: int = 4                # número de vigas
+    de_dist: float = 0.9            # m, eje de la viga exterior a la cara interior de la barrera
+    w_calzada: float = 0.0          # m, ancho libre de calzada (0 = sin cuerpo rígido)
+    diafragmas: bool = True         # vigas con diafragmas: aplica cuerpo rígido
+    viga_dist: str = "interior"     # "interior" | "exterior": cuál se aplica por defecto
 
     # Peso propio "por viga": desglose individual de cada partida (viga, losa,
     # carpeta, baranda) para graficarlas por separado y prender/apagar cada
@@ -342,6 +444,15 @@ class Parametros:
                 raise ValueError("El tipo de viga debe ser «hormigon» o «acero».")
             if self.separacion_vigas <= 0:
                 raise ValueError("La separación entre vigas debe ser positiva.")
+            if self.norma == HL_93:
+                if self.ts_dist <= 0 or self.n_mod <= 0 or self.Ig_dist <= 0 \
+                        or self.Ag_dist <= 0 or self.eg_dist <= 0:
+                    raise ValueError("AASHTO LRFD: indique espesor de losa, relación modular, "
+                                     "inercia, área y excentricidad de la viga (Kg > 0).")
+                if self.nb_dist < 2:
+                    raise ValueError("AASHTO LRFD: el número de vigas debe ser al menos 2.")
+                if self.viga_dist not in ("interior", "exterior"):
+                    raise ValueError("La viga debe ser «interior» o «exterior».")
             if self.n_vias_diseno not in (1, 2):
                 raise ValueError("El número de vías de diseño debe ser 1 o 2 (2 = dos o más).")
         if self.incluir_pp_por_viga:
@@ -819,6 +930,8 @@ class Resultados:
     dist_D: Optional[float] = None
     dist_S_ft: Optional[float] = None
     dist_aviso: Optional[str] = None
+    dist_gV: Optional[float] = None
+    dist_lrfd: Optional[dict] = None
     # Envolvente de M por sentido de circulación ("normal"/"espejo"), por
     # envolvente que involucra vehículos (camion/tandem/especial/cvt/
     # combinada): permite reportar en el gráfico la posición crítica propia
@@ -922,7 +1035,16 @@ class Resultados:
             out.append("   barandas  : %.3f Tnf/m  (%s)" % (dpv["barandas"], _modo_txt))
             out.append("   TOTAL     : %.3f Tnf/m  (no lleva mayoración de carga viva ni impacto)"
                        % dpv["total"])
-        if par.incluir_distribucion:
+        if par.incluir_distribucion and self.dist_lrfd is not None:
+            out.append("")
+            out.append("Distribución transversal (AASHTO LRFD, Art. 4.6.2.2; los factores ya "
+                       "incluyen la presencia múltiple):")
+            out.extend("   " + t for t in self.dist_lrfd["detalle"])
+            for a in self.dist_lrfd["avisos"]:
+                out.append("   AVISO: " + a)
+            out.append("   M_viga = gM x M_vía completa ;  V y reacciones = gV x valor de vía "
+                       "completa. El peso propio no lleva estos coeficientes.")
+        elif par.incluir_distribucion:
             out.append("")
             out.append("Distribución transversal de momento (AASHTO Standard, Tabla 3.23.1, "
                        "método S/D):")
@@ -945,11 +1067,11 @@ class Resultados:
     def orden(self) -> List[str]:
         """Claves de las envolventes presentes, en orden de presentación."""
         posibles = ["camion", "tandem", "especial", "cvt", "carril", "peso_propio",
-                   "combinada", "viga_interior"]
+                   "combinada", "viga_interior", "viga_exterior"]
         return [k for k in posibles if k in self.envolventes]
 
     def con_factores(self, impacto: bool = True, distribucion: bool = True,
-                     mayoracion: bool = True) -> "Resultados":
+                     mayoracion: bool = True, viga: Optional[str] = None) -> "Resultados":
         """Vista de las envolventes de carga viva con cada factor prendido o
         apagado, SIN recalcular el barrido: usa los datos crudos que dejó
         `calcular`.
@@ -957,9 +1079,10 @@ class Resultados:
         - `impacto`: 1+I (o 1.33) en el vehículo (camión, tándem, especial, cvt) y en
           la combinada; nunca en la faja de carril.
         - `mayoracion`: `factor_mayoracion` sobre toda la carga viva.
-        - `distribucion`: g = S/D sobre el MOMENTO de toda la carga viva (el
-          corte y las reacciones quedan por vía completa). Sólo existe si el
-          cálculo se hizo con `incluir_distribucion`; si no, se ignora.
+        - `distribucion`: AASHTO Standard: g = S/D sobre el MOMENTO (corte y
+          reacciones por vía completa). AASHTO LRFD: gM sobre el momento y gV
+          sobre corte y reacciones, de la viga `viga` ("interior"/"exterior").
+          Sólo existe si el cálculo se hizo con `incluir_distribucion`.
         En esta vista no aparece la envolvente aparte "viga_interior": su
         lugar lo toma el factor g. El peso propio no lleva ninguno.
         Con los tres prendidos, las envolventes de carga viva coinciden bit a
@@ -972,7 +1095,12 @@ class Resultados:
         fdx = self.fd_x if impacto else np.ones_like(X)
         fdR = (self.impacto_apoyos if impacto
                else {i: 1.0 for i in range(est.n_sup)})
-        g = self.dist_g if (distribucion and self.dist_g) else None
+        g, gV = None, None
+        if distribucion and self.dist_g:
+            g, gV = self.dist_g, self.dist_gV
+            if self.dist_lrfd is not None:
+                d = self.dist_lrfd[viga or par.viga_dist]
+                g, gV = d["gM"], d["gV"]
         n = est.n_sup
 
         _, Vcx, Vcn, Mcx, Mcn, Rpc, Rnc = self.base_cvt
@@ -1010,10 +1138,14 @@ class Resultados:
             Rn = {i: fm * v for i, v in dict(Rn).items()}
             if g is not None:
                 Mx, Mn = np.round(Mx * g, 3), np.round(Mn * g, 3)
+                if gV is not None:
+                    Vx, Vn = np.round(Vx * gV, 3), np.round(Vn * gV, 3)
+                    Rp = {i: v * gV for i, v in Rp.items()}
+                    Rn = {i: v * gV for i, v in Rn.items()}
             envs[clave] = Envolvente(titulo, Vx, Vn, Mx, Mn, Rp, Rn,
                                      _resumen(est, X, Vx, Vn, Mx, Mn))
         for k, v in self.envolventes.items():     # peso propio y sus partidas
-            if k not in vivas and k != "viga_interior":
+            if k not in vivas and k not in ("viga_interior", "viga_exterior"):
                 envs[k] = v
         return replace(self, envolventes=envs,
                        factores={"impacto": impacto, "distribucion": g is not None,
@@ -1597,9 +1729,25 @@ def calcular(par: Parametros, progreso: Optional[Callable[[float, str], bool]] =
     # reacciones se conservan por vía completa: esta tabla no da un factor
     # para ellos. El peso propio queda aparte: su reparto por viga es por
     # ancho tributario, un método distinto del de rueda móvil que usa g.
-    dist_g = dist_D = dist_S_ft = None
+    dist_g = dist_D = dist_S_ft = dist_gV = dist_lrfd = None
     dist_aviso = None
-    if par.incluir_distribucion and "combinada" in envs:
+    if par.incluir_distribucion and "combinada" in envs and par.norma == HL_93:
+        dist_lrfd = factores_distribucion_lrfd(par)
+        comb = envs["combinada"]
+        for viga, nombre in (("interior", "INTERIOR"), ("exterior", "EXTERIOR")):
+            gm, gv = dist_lrfd[viga]["gM"], dist_lrfd[viga]["gV"]
+            Vx_vg, Vn_vg = np.round(comb.V_max * gv, 3), np.round(comb.V_min * gv, 3)
+            Mx_vg, Mn_vg = np.round(comb.M_max * gm, 3), np.round(comb.M_min * gm, 3)
+            envs["viga_" + viga] = Envolvente(
+                "VIGA %s  (gM = %.4f ; gV = %.4f, AASHTO LRFD)" % (nombre, gm, gv),
+                Vx_vg, Vn_vg, Mx_vg, Mn_vg,
+                {i: v * gv for i, v in comb.R_pos.items()},
+                {i: v * gv for i, v in comb.R_neg.items()},
+                _resumen(est, X, Vx_vg, Vn_vg, Mx_vg, Mn_vg))
+        dist_g = dist_lrfd[par.viga_dist]["gM"]
+        dist_gV = dist_lrfd[par.viga_dist]["gV"]
+        dist_aviso = " ".join(dist_lrfd["avisos"]) or None
+    elif par.incluir_distribucion and "combinada" in envs:
         dist_g, dist_D, dist_S_ft, dist_aviso = factor_distribucion_momento(
             par.tipo_viga, par.separacion_vigas, par.n_vias_diseno)
         comb = envs["combinada"]
@@ -1622,6 +1770,9 @@ def calcular(par: Parametros, progreso: Optional[Callable[[float, str], bool]] =
     if len(nombres_veh) > 1:
         direccion_M["cvt"] = _dir(Mcvt_max_n, Mcvt_max_e, Mcvt_min_n, Mcvt_min_e)
     direccion_M["combinada"] = _dir(Mcomb_max_n, Mcomb_max_e, Mcomb_min_n, Mcomb_min_e)
+    for _v in ("viga_exterior",):
+        if _v in envs:
+            direccion_M[_v] = direccion_M["combinada"]
     if "viga_interior" in envs:
         # Mismo M que "combinada", sólo escalado por g (constante > 0): la
         # posición de cada pico no cambia.
@@ -1636,6 +1787,7 @@ def calcular(par: Parametros, progreso: Optional[Callable[[float, str], bool]] =
                       if par.impacto_modo != "fijo" else [par.factor_dinamico] * est.n_tramos,
                       impacto_apoyos=dict(fd_R),
                       dist_g=dist_g, dist_D=dist_D, dist_S_ft=dist_S_ft, dist_aviso=dist_aviso,
+                      dist_gV=dist_gV, dist_lrfd=dist_lrfd,
                       direccion_M=direccion_M,
                       base_viva={c[0]: (c[1],) + tuple(c[2:]) for c in crudas
                                  if c[0] != "combinada"},

@@ -1062,6 +1062,32 @@ for etq, kw in (("alternativa", {}), ("suma", {"modo_combinacion": "suma"})):
     chequear("T12 %s: la vista no muestra viga_interior" % etq,
              "viga_interior" not in v2.envolventes)
 
+# --- T13: distribución AASHTO LRFD (Art. 4.6.2.2) con los datos de la Tarea 3 (43 m, 6 vigas)
+pl = mp.aplicar_norma(mp.Parametros(tramos=[43.0], dx=0.5), mp.HL_93)
+pl.incluir_distribucion = True
+pl.separacion_vigas = 3.4; pl.ts_dist = 0.25; pl.n_mod = 1.1678
+pl.Ig_dist = 0.4611; pl.Ag_dist = 0.781; pl.eg_dist = 1.2561
+pl.nb_dist = 6; pl.de_dist = 0.9; pl.w_calzada = 18.8
+fl = mp.factores_distribucion_lrfd(pl)
+for nombre, valor, esperado in (
+        ("gM interior", fl["interior"]["gM"], 0.8135), ("gV interior", fl["interior"]["gV"], 1.0280),
+        ("palanca exterior", fl["palanca"], 0.9798), ("cuerpo rígido exterior", fl["rigido"], 0.8770),
+        ("gM exterior adoptado", fl["exterior"]["gM"], 0.9798),
+        ("gV exterior adoptado", fl["exterior"]["gV"], 0.9798)):
+    chequear("T13 LRFD %s = %.4f (informe T3)" % (nombre, esperado), abs(valor - esperado) < 6e-5,
+             "dio %.5f" % valor)
+rl = mp.calcular(pl)
+for viga in ("interior", "exterior"):
+    v = rl.con_factores(True, True, True, viga)
+    e = rl.envolventes["viga_" + viga]
+    chequear("T13 LRFD vista %s == envolvente viga_%s (M y V)" % (viga, viga),
+             _igual(v.envolventes["combinada"], e))
+    chequear("T13 LRFD vista %s: reacciones x gV" % viga,
+             abs(v.envolventes["combinada"].R_pos[0] - e.R_pos[0]) < 1e-6)
+pl.norma = mp.HS20_44
+chequear("T13 con otra norma sigue el método S/D (sin factores LRFD)",
+         mp.calcular(mp.Parametros(tramos=[10, 12], dx=0.5, incluir_distribucion=True)).dist_lrfd is None)
+
 print()
 print("=" * 78)
 print("RESULTADO: " + ("TODOS LOS TESTS PASARON" if not fallos else "FALLARON -> %s" % fallos))

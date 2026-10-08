@@ -34,6 +34,7 @@ IMPACTOS = {"aashto_standard": "I = 50/(L+125) ≤ 0.30",
             "fijo": "Fijo (1 + IM)"}
 
 TIPOS_VIGA = {"hormigon": "Hormigón armado", "acero": "Acero"}
+VIGAS_DIST = {"interior": "Viga interior", "exterior": "Viga exterior"}
 VIAS_DISENO = {1: "1 vía de diseño", 2: "2 o más vías de diseño"}
 MODOS_BARANDA = {
     "ninguna": "No incluir (viga interior)",
@@ -682,6 +683,7 @@ class Aplicacion(tk.Tk):
         self.cb_dist_vias.bind("<<ComboboxSelected>>", lambda _: self._actualizar_dist())
 
         self.campos_dist = [self.cb_dist_tipo, self.campo_dist_S, self.cb_dist_vias]
+        self.marco_dist_std = dist
         self.lbl_dist = ttk.Label(dist, text="", foreground="#123a8a", justify="left")
         self.lbl_dist.grid(row=4, column=0, columnspan=3, sticky="w", pady=(4, 0))
         ttk.Label(dist, text="Coeficiente g = S/D (AASHTO Standard, Tabla 3.23.1). Sólo\n"
@@ -689,9 +691,71 @@ class Aplicacion(tk.Tk):
                              "completa. No se aplica al peso propio (usa otro método).",
                   foreground="gray").grid(row=5, column=0, columnspan=3, sticky="w", pady=(4, 0))
         dist.columnconfigure(0, weight=1)
+
+        # --- AASHTO LRFD (Art. 4.6.2.2): reemplaza al método S/D con la norma HL-93
+        dl = ttk.LabelFrame(marco, text="Distribución transversal AASHTO LRFD (Art. 4.6.2.2)",
+                            padding=6)
+        self.marco_dist_lrfd = dl
+        self.var_dist_incluir_l = tk.BooleanVar(value=par.incluir_distribucion)
+        ttk.Checkbutton(dl, text="Calcular coeficientes (momento y corte, viga interior y "
+                                 "exterior)", variable=self.var_dist_incluir_l,
+                        command=lambda: (self.var_dist_incluir.set(self.var_dist_incluir_l.get()),
+                                         self._alternar_dist())
+                        ).grid(row=0, column=0, columnspan=3, sticky="w")
+        self.var_dist_incluir.trace_add("write", lambda *_: self.var_dist_incluir_l.set(
+            self.var_dist_incluir.get()))
+        self.vl = {}
+        self.campos_dist_l = []
+        filas_l = [("S", "Separación entre vigas S (m)", self.var_dist_S, "eje a eje"),
+                   ("nb_dist", "Número de vigas Nb", None, "mín. 4 para las fórmulas"),
+                   ("ts_dist", "Espesor de losa ts (m)", None, "4.5–12 in"),
+                   ("L_dist", "Luz L para la fórmula (m)", None, "0 = promedio de las luces"),
+                   ("n_mod", "Relación modular n", None, "(f'c viga / f'c losa)^0.33"),
+                   ("Ig_dist", "Inercia de la viga Ig (m4)", None, ""),
+                   ("Ag_dist", "Área de la viga Ag (m2)", None, ""),
+                   ("eg_dist", "Excentricidad eg (m)", None, "centroide viga a centroide losa"),
+                   ("de_dist", "de: eje viga ext. a barrera (m)", None, "−0.3 a 1.68 m"),
+                   ("w_calzada", "Ancho libre de calzada w (m)", None,
+                    "0 = sin cuerpo rígido")]
+        for i, (clave, etq, var, ayuda) in enumerate(filas_l, start=1):
+            if var is None:
+                var = tk.StringVar(value="%g" % getattr(par, clave))
+            self.vl[clave] = var
+            ttk.Label(dl, text=etq).grid(row=i, column=0, sticky="w", pady=1)
+            campo = ttk.Entry(dl, textvariable=var, width=10)
+            campo.grid(row=i, column=1, sticky="e", pady=1)
+            ttk.Label(dl, text=ayuda, foreground="gray").grid(row=i, column=2, sticky="w",
+                                                              padx=(6, 0))
+            self.campos_dist_l.append(campo)
+            var.trace_add("write", lambda *_: self._actualizar_dist())
+        n_fl = len(filas_l) + 1
+        self.var_diafragmas = tk.BooleanVar(value=par.diafragmas)
+        chk_d = ttk.Checkbutton(dl, text="Vigas con diafragmas (verifica cuerpo rígido en la "
+                                         "viga exterior)", variable=self.var_diafragmas,
+                                command=self._actualizar_dist)
+        chk_d.grid(row=n_fl, column=0, columnspan=3, sticky="w")
+        self.campos_dist_l.append(chk_d)
+        ttk.Label(dl, text="Viga que se usa por defecto").grid(row=n_fl + 1, column=0,
+                                                               sticky="w", pady=1)
+        self.var_viga_dist = tk.StringVar(value=VIGAS_DIST[par.viga_dist])
+        cb_v = ttk.Combobox(dl, textvariable=self.var_viga_dist, state="readonly", width=16,
+                            values=list(VIGAS_DIST.values()))
+        cb_v.grid(row=n_fl + 1, column=1, columnspan=2, sticky="ew", pady=1)
+        cb_v.bind("<<ComboboxSelected>>", lambda _: self._actualizar_dist())
+        self.campos_dist_l.append(cb_v)
+        self.lbl_dist_l = ttk.Label(dl, text="", foreground="#123a8a", justify="left")
+        self.lbl_dist_l.grid(row=n_fl + 2, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        ttk.Label(dl, text="Los factores incluyen la presencia múltiple (no se vuelve a aplicar).\n"
+                           "Afectan momento (gM) y corte/reacciones (gV). No se aplican al peso\n"
+                           "propio. En Gráficos se elige viga interior o exterior.",
+                  foreground="gray").grid(row=n_fl + 3, column=0, columnspan=3, sticky="w",
+                                          pady=(4, 0))
+        dl.columnconfigure(0, weight=1)
         self._alternar_dist()
+        self._mostrar_dist_segun_norma(par.norma)
 
         ppv = ttk.LabelFrame(marco, text="Peso propio por viga (desglose por partida)", padding=6)
+        self.marco_ppv = ppv
         ppv.pack(fill="x", pady=(0, 6))
         self.var_ppv_incluir = tk.BooleanVar(value=par.incluir_pp_por_viga)
         ttk.Checkbutton(ppv, text="Calcular el desglose (viga, losa, carpeta y baranda por "
@@ -879,6 +943,12 @@ class Aplicacion(tk.Tk):
                                          variable=self.var_f_may, command=self._refrescar_vista)
         for c in (self.chk_f_imp, self.chk_f_dist, self.chk_f_may):
             c.pack(side="left", padx=8)
+        ttk.Label(cab2, text="   Viga:").pack(side="left")
+        self.var_f_viga = tk.StringVar(value=VIGAS_DIST["interior"])
+        self.cb_f_viga = ttk.Combobox(cab2, textvariable=self.var_f_viga, state="disabled",
+                                      width=14, values=list(VIGAS_DIST.values()))
+        self.cb_f_viga.pack(side="left", padx=6)
+        self.cb_f_viga.bind("<<ComboboxSelected>>", lambda _: self._refrescar_vista())
         self.res_base = None
 
         self.figura = Figure(figsize=(9, 6.5))
@@ -1086,17 +1156,70 @@ class Aplicacion(tk.Tk):
                      + "   ".join(aps)
         self.lbl_impacto.configure(text=linea1 + linea2)
 
-    def _alternar_dist(self):
-        estado = "readonly" if self.var_dist_incluir.get() else "disabled"
-        self.cb_dist_tipo.configure(state=estado)
-        self.cb_dist_vias.configure(state=estado)
-        self.campo_dist_S.configure(state=("normal" if self.var_dist_incluir.get()
-                                           else "disabled"))
+    def _mostrar_dist_segun_norma(self, norma):
+        """AASHTO LRFD usa su propio panel; el resto de las normas, el método S/D."""
+        if not hasattr(self, "marco_dist_lrfd"):
+            return
+        lrfd = (norma == mp.HL_93)
+        mostrar, ocultar = ((self.marco_dist_lrfd, self.marco_dist_std) if lrfd
+                            else (self.marco_dist_std, self.marco_dist_lrfd))
+        ocultar.pack_forget()
+        if hasattr(self, "marco_ppv"):
+            mostrar.pack(fill="x", pady=(0, 6), before=self.marco_ppv)
+        else:
+            mostrar.pack(fill="x", pady=(0, 6))
         self._actualizar_dist()
 
+    def _alternar_dist(self):
+        activo = self.var_dist_incluir.get()
+        estado = "readonly" if activo else "disabled"
+        self.cb_dist_tipo.configure(state=estado)
+        self.cb_dist_vias.configure(state=estado)
+        self.campo_dist_S.configure(state=("normal" if activo else "disabled"))
+        for c in getattr(self, "campos_dist_l", []):
+            c.configure(state=("readonly" if isinstance(c, ttk.Combobox)
+                               else "normal") if activo else "disabled")
+        self._actualizar_dist()
+
+    def _par_lrfd(self):
+        """Parámetros mínimos para evaluar los coeficientes LRFD en vivo."""
+        g = lambda k, n: parsear_num(self.vl[k].get(), n)
+        return mp.Parametros(
+            tramos=parsear_lista(self.var_tramos.get(), "Luces de los tramos"),
+            separacion_vigas=g("S", "Separación entre vigas"),
+            nb_dist=int(round(g("nb_dist", "Número de vigas"))),
+            ts_dist=g("ts_dist", "Espesor de losa"), L_dist=g("L_dist", "Luz L"),
+            n_mod=g("n_mod", "Relación modular"), Ig_dist=g("Ig_dist", "Inercia"),
+            Ag_dist=g("Ag_dist", "Área"), eg_dist=g("eg_dist", "Excentricidad"),
+            de_dist=g("de_dist", "de"), w_calzada=g("w_calzada", "Ancho de calzada"),
+            diafragmas=bool(self.var_diafragmas.get()),
+            viga_dist=_clave_de(VIGAS_DIST, self.var_viga_dist.get(), "interior"))
+
     def _actualizar_dist(self):
-        """Recalcula g = S/D en vivo, con el mismo aviso de rango que dará el cálculo."""
+        """Recalcula los coeficientes en vivo, con los mismos avisos que dará el cálculo."""
         if not hasattr(self, "lbl_dist"):
+            return
+        if self.var_norma.get() == mp.HL_93 and hasattr(self, "lbl_dist_l"):
+            self.lbl_dist_l.configure(text="")
+            if not self.var_dist_incluir.get():
+                return
+            try:
+                par = self._par_lrfd()
+                if par.Ig_dist <= 0 or par.Ag_dist <= 0 or par.eg_dist <= 0 or par.ts_dist <= 0 \
+                        or par.n_mod <= 0 or par.separacion_vigas <= 0:
+                    self.lbl_dist_l.configure(
+                        text="Complete S, ts, n, Ig, Ag y eg (todos > 0).", foreground="#a11")
+                    return
+                f = mp.factores_distribucion_lrfd(par)
+            except (ValueError, ZeroDivisionError):
+                return
+            texto = "\n".join(f["detalle"][1:3] + f["detalle"][3:3]) + "\n" + \
+                "Exterior adoptado: gM = %.4f ; gV = %.4f" % (
+                    f["exterior"]["gM"], f["exterior"]["gV"])
+            if f["avisos"]:
+                texto += "\n" + "\n".join(f["avisos"])
+            self.lbl_dist_l.configure(text=texto,
+                                      foreground="#a11" if f["avisos"] else "#123a8a")
             return
         if not self.var_dist_incluir.get():
             self.lbl_dist.configure(text="")
@@ -1272,6 +1395,7 @@ class Aplicacion(tk.Tk):
             self.var_norma.set(getattr(self, "norma_actual", mp.HS20_44))
             return
         self._escribir_carga_diseno(mp.aplicar_norma(mp.Parametros(), norma))
+        self._mostrar_dist_segun_norma(norma)
 
     def _describir_norma(self):
         d = mp.NORMAS.get(self.var_norma.get())
@@ -1305,6 +1429,18 @@ class Aplicacion(tk.Tk):
         self.var_may.set("%g" % par.factor_mayoracion)
         self._describir_norma()
         self._alternar_sep()
+
+    def _campos_lrfd(self):
+        """Campos de distribución LRFD (se leen siempre, aunque la norma sea otra)."""
+        g = lambda k, n: parsear_num(self.vl[k].get(), n)
+        return dict(
+            ts_dist=g("ts_dist", "Espesor de losa"), L_dist=g("L_dist", "Luz L"),
+            n_mod=g("n_mod", "Relación modular"), Ig_dist=g("Ig_dist", "Inercia"),
+            Ag_dist=g("Ag_dist", "Área"), eg_dist=g("eg_dist", "Excentricidad"),
+            nb_dist=int(round(g("nb_dist", "Número de vigas"))),
+            de_dist=g("de_dist", "de"), w_calzada=g("w_calzada", "Ancho de calzada"),
+            diafragmas=bool(self.var_diafragmas.get()),
+            viga_dist=_clave_de(VIGAS_DIST, self.var_viga_dist.get(), "interior"))
 
     def leer_parametros(self):
         par = mp.Parametros(
@@ -1345,6 +1481,7 @@ class Aplicacion(tk.Tk):
             tipo_viga=_clave_de(TIPOS_VIGA, self.var_dist_tipo.get(), "acero"),
             separacion_vigas=parsear_num(self.var_dist_S.get(), "Separación entre vigas"),
             n_vias_diseno=_clave_de(VIAS_DISENO, self.var_dist_vias.get(), 2),
+            **self._campos_lrfd(),
             incluir_pp_por_viga=bool(self.var_ppv_incluir.get()),
             ancho_tributario=parsear_num(self.var_ppv_ancho.get(), "Ancho tributario"),
             modo_baranda_pp=_clave_de(MODOS_BARANDA, self.var_ppv_baranda.get(), "ninguna"))
@@ -1373,7 +1510,13 @@ class Aplicacion(tk.Tk):
         self.var_dist_tipo.set(TIPOS_VIGA[par.tipo_viga])
         self.var_dist_S.set("%g" % par.separacion_vigas)
         self.var_dist_vias.set(VIAS_DISENO[par.n_vias_diseno])
+        for k in ("nb_dist", "ts_dist", "L_dist", "n_mod", "Ig_dist", "Ag_dist", "eg_dist",
+                  "de_dist", "w_calzada"):
+            self.vl[k].set("%g" % getattr(par, k))
+        self.var_diafragmas.set(bool(par.diafragmas))
+        self.var_viga_dist.set(VIGAS_DIST[par.viga_dist])
         self._alternar_dist()
+        self._mostrar_dist_segun_norma(par.norma)
         self.var_ppv_incluir.set(bool(par.incluir_pp_por_viga))
         # El ancho tributario guardado puede diferir de la separación entre
         # vigas (el usuario lo desacopló con el checkbox "auto"): al abrir el
@@ -1451,10 +1594,14 @@ class Aplicacion(tk.Tk):
         dist_ok = bool(res.dist_g)
         return res.con_factores(impacto=self.var_f_imp.get(),
                                 distribucion=self.var_f_dist.get() and dist_ok,
-                                mayoracion=self.var_f_may.get())
+                                mayoracion=self.var_f_may.get(),
+                                viga=_clave_de(VIGAS_DIST, self.var_f_viga.get(), "interior"))
 
     def _estado_checks_factores(self, res):
         self.chk_f_dist.configure(state="normal" if res.dist_g else "disabled")
+        self.cb_f_viga.configure(state="readonly" if res.dist_lrfd else "disabled")
+        if res.dist_lrfd:
+            self.var_f_viga.set(VIGAS_DIST[res.parametros.viga_dist])
         if not res.dist_g:
             self.var_f_dist.set(False)
 
@@ -1784,6 +1931,9 @@ class Aplicacion(tk.Tk):
                  "tipo_viga": par.tipo_viga,
                  "separacion_vigas": par.separacion_vigas,
                  "n_vias_diseno": par.n_vias_diseno,
+                 "lrfd_dist": {k: getattr(par, k) for k in (
+                     "ts_dist", "L_dist", "n_mod", "Ig_dist", "Ag_dist", "eg_dist", "nb_dist",
+                     "de_dist", "w_calzada", "diafragmas", "viga_dist")},
                  "incluir_pp_por_viga": par.incluir_pp_por_viga,
                  "ancho_tributario": par.ancho_tributario,
                  "modo_baranda_pp": par.modo_baranda_pp}
@@ -1839,6 +1989,10 @@ class Aplicacion(tk.Tk):
                 tipo_viga=d.get("tipo_viga", "acero"),
                 separacion_vigas=float(d.get("separacion_vigas", 2.0)),
                 n_vias_diseno=int(d.get("n_vias_diseno", 2)),
+                **{k: type(getattr(mp.Parametros, k))(v)
+                   for k, v in d.get("lrfd_dist", {}).items()
+                   if k in ("ts_dist", "L_dist", "n_mod", "Ig_dist", "Ag_dist", "eg_dist",
+                            "nb_dist", "de_dist", "w_calzada", "diafragmas", "viga_dist")},
                 incluir_pp_por_viga=bool(d.get("incluir_pp_por_viga", False)),
                 ancho_tributario=float(d.get("ancho_tributario", 2.0)),
                 modo_baranda_pp=d.get("modo_baranda_pp", "ninguna"))
