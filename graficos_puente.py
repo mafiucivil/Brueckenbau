@@ -510,12 +510,16 @@ def figura_envolvente(res, clave: str = "combinada", fig: Optional[Figure] = Non
             dibujar_esquema(ax_esq, est, carga_uniforme=par.w_carril, factor=factor, uf=uf)
         elif clave == "peso_propio":
             dibujar_esquema(ax_esq, est, carga_uniforme=par.peso_propio_total(), factor=factor, uf=uf)
+        elif clave.startswith("pp_"):
+            w_viga = par.desglose_peso_propio_por_viga()[clave[3:]]
+            dibujar_esquema(ax_esq, est, carga_uniforme=w_viga, factor=factor, uf=uf)
         else:
             dibujar_esquema(ax_esq, est, ejes_carga=par.ejes_camion, factor=factor, uf=uf)
     else:
         ax_v, ax_m = fig.subplots(2, 1)
 
-    rotulo = "Envolvente de Carga Viva: %s" % env.titulo
+    rotulo = ("Diagrama de Peso Propio: %s" if clave == "peso_propio" or clave.startswith("pp_")
+              else "Envolvente de Carga Viva: %s") % env.titulo
     # Los títulos de la combinación pueden ser largos (nombran los vehículos y
     # la forma de combinar): se achica la letra en vez de dejar que se corte.
     tam = 15 if len(rotulo) <= 60 else max(8.5, 15.0 * 60.0 / len(rotulo))

@@ -1691,7 +1691,7 @@ def calcular(par: Parametros, progreso: Optional[Callable[[float, str], bool]] =
     if pp is not None:
         w_pp, Vpp, Mpp, Rpp_dict = pp
         envs["peso_propio"] = Envolvente(
-            "PESO PROPIO (%.3f Tnf/m)" % w_pp, Vpp, Vpp, Mpp, Mpp, Rpp_dict, Rpp_dict,
+            "PESO PROPIO PUENTE COMPLETO (%.3f Tnf/m)" % w_pp, Vpp, Vpp, Mpp, Mpp, Rpp_dict, Rpp_dict,
             _resumen(est, X, Vpp, Vpp, Mpp, Mpp))
 
     # ----------------------------------------- peso propio por viga (desglose)

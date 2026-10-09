@@ -14,6 +14,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
+import numpy as np
 import matplotlib
 matplotlib.use("TkAgg")
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
@@ -943,6 +944,9 @@ class Aplicacion(tk.Tk):
                                          variable=self.var_f_may, command=self._refrescar_vista)
         for c in (self.chk_f_imp, self.chk_f_dist, self.chk_f_may):
             c.pack(side="left", padx=8)
+        self.lbl_f_valores = ttk.Label(tab_g, text="", foreground="#123a8a",
+                                       padding=(6, 0, 6, 4))
+        self.lbl_f_valores.pack(fill="x")
         ttk.Label(cab2, text="   Viga:").pack(side="left")
         self.var_f_viga = tk.StringVar(value=VIGAS_DIST["interior"])
         self.cb_f_viga = ttk.Combobox(cab2, textvariable=self.var_f_viga, state="disabled",
@@ -1610,6 +1614,7 @@ class Aplicacion(tk.Tk):
             return
         claves = [self._clave(v) for v in (self.var_caso_g, self.var_caso_t)]
         self.resultados = self._vista(self.res_base)
+        self.lbl_f_valores.configure(text=self._texto_valores_factores(self.res_base))
         etiquetas = [c[0] for c in self._casos()]
         self.cb_g.configure(values=etiquetas)
         self.cb_t.configure(values=etiquetas)
@@ -1623,10 +1628,32 @@ class Aplicacion(tk.Tk):
         self.txt.delete("1.0", "end")
         self.txt.insert("1.0", self.resultados.texto_resumen())
 
+    def _texto_valores_factores(self, base):
+        """Valor de cada factor marcado (impacto, distribución, mayoración)."""
+        partes = []
+        par = base.parametros
+        if self.var_f_imp.get() and base.fd_x is not None:
+            lo, hi = float(np.min(base.fd_x)), float(np.max(base.fd_x))
+            partes.append("Impacto: %s = %.3f" % (base.imp_txt, lo) if hi - lo < 5e-4 else
+                          "Impacto: %s = %.3f a %.3f (varía por sección, según la luz)"
+                          % (base.imp_txt, lo, hi))
+        if self.var_f_dist.get() and base.dist_g:
+            if base.dist_lrfd:
+                k = _clave_de(VIGAS_DIST, self.var_f_viga.get(), "interior")
+                d = base.dist_lrfd[k]
+                partes.append("Distribución (viga %s, LRFD): gM = %.4f ; gV = %.4f"
+                              % (k, d["gM"], d["gV"]))
+            else:
+                partes.append("Distribución: g = S/D = %.4f (sólo momento)" % base.dist_g)
+        if self.var_f_may.get():
+            partes.append("Mayoración: x%g" % par.factor_mayoracion)
+        return "     |     ".join(partes)
+
     def _al_terminar(self, res):
         self.res_base = res
         self._estado_checks_factores(res)
         self.resultados = res = self._vista(res)
+        self.lbl_f_valores.configure(text=self._texto_valores_factores(self.res_base))
         self.progreso["value"] = 100
         avisos = res.estructura.avisos
         msg = "Cálculo terminado.  %s" % res.estructura.descripcion().splitlines()[-1]
@@ -1649,6 +1676,9 @@ class Aplicacion(tk.Tk):
             return []
         orden = self.resultados.orden
         claves = ["combinada"] + [k for k in orden if k != "combinada"]
+        if "pp_total" in self.resultados.envolventes:   # peso propio de UNA viga
+            claves.insert(claves.index("peso_propio") + 1 if "peso_propio" in claves
+                          else len(claves), "pp_total")
         return [(self.resultados.envolventes[k].titulo, k) for k in claves]
 
     def _actualizar_casos(self):
