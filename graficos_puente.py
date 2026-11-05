@@ -699,3 +699,52 @@ def figura_peso_propio_viga(res, activos: List[str], fig: Optional[Figure] = Non
     fig.tight_layout()
     return fig
 
+
+
+# =============================================================================
+# FIGURA DEL CAMIÓN ESPECIAL REPARTIDO ENTRE VIGAS
+# =============================================================================
+def figura_especial_vigas(res, n_vigas: float, fig: Optional[Figure] = None,
+                          unidad: str = UNIDAD_DEFECTO, anotar: bool = True) -> Figure:
+    """Diagrama de momento flector del camión especial repartido en `n_vigas`
+    vigas (puede ser fraccionario: 2.5, 3...). `res` es la vista con los
+    factores que se quieran (impacto, mayoración): se usa su envolvente
+    "especial", que es la de UNA vía completa; cada viga toma M / n_vigas.
+    Se dibujan las dos: la vía completa, atenuada, y la de una viga."""
+    est, X = res.estructura, res.X
+    env = res.envolventes["especial"]
+    factor, uf = UNIDADES.get(unidad, UNIDADES[UNIDAD_DEFECTO])
+    M_max_t, M_min_t = env.M_max * factor, env.M_min * factor
+    M_max, M_min = M_max_t / n_vigas, M_min_t / n_vigas
+
+    if fig is None:
+        fig = Figure(figsize=(12, 9))
+    fig.clear()
+    ax_esq, ax_m = fig.subplots(2, 1, gridspec_kw={"height_ratios": [1.5, 3]})
+    dibujar_esquema(ax_esq, est, ejes_carga=res.ejes_especial, factor=factor, uf=uf)
+
+    f = res.factores or {}
+    activos = [n for n, k in (("impacto", "impacto"), ("mayoración", "mayoracion"))
+               if f.get(k)]
+    nota = ("con " + " y ".join(activos)) if activos else "sin impacto ni mayoración"
+    fig.suptitle("%s: momento flector por viga (%g viga%s, %s)"
+                 % (res.parametros.nombre_especial, n_vigas, "" if n_vigas == 1 else "s", nota),
+                 fontsize=13, fontweight="bold")
+
+    m_sup = max(float(np.max(M_max_t)), 1e-6)
+    m_inf = float(np.min(M_min_t))
+    margen = max(abs(m_sup), abs(m_inf)) * 0.2
+    _config_ax(ax_m, est, (m_sup + margen, m_inf - margen), "Momento Flector (%s·m)" % uf)
+    ax_m.set_xlabel("Distancia a lo largo de la estructura (m)", fontweight="bold")
+    if n_vigas != 1:
+        ax_m.plot(X, M_max_t, "-", color="0.65", lw=1.2, label="Vía completa, máx (+)")
+        ax_m.plot(X, M_min_t, "--", color="0.65", lw=1.2, label="Vía completa, mín (-)")
+    ax_m.plot(X, M_max, "r-", lw=1.8, label="Por viga, máx (+)")
+    ax_m.plot(X, M_min, "r--", lw=1.8, label="Por viga, mín (-)")
+    ax_m.fill_between(X, M_min, M_max, color="salmon", alpha=0.4)
+    ax_m.legend(loc="upper right", fontsize=9)
+    if anotar:
+        _anotar_picos_dmf(ax_m, X, est, M_max, M_min, "darkred",
+                          dir_data=getattr(res, "direccion_M", {}).get("especial"))
+    fig.tight_layout()
+    return fig

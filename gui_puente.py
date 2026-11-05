@@ -1014,6 +1014,41 @@ class Aplicacion(tk.Tk):
         libreta.add(tab_pv, text="  Peso propio por viga  ")
         self._actualizar_chks_pp_viga()
 
+        # --- Camión especial repartido entre vigas
+        tab_e = ttk.Frame(libreta, padding=4)
+        fila_e = ttk.Frame(tab_e)
+        fila_e.pack(fill="x")
+        ttk.Label(fila_e, text="Vigas que resisten el momento:").pack(side="left")
+        self.var_e_n = tk.StringVar(value="1")
+        campo_n = ttk.Entry(fila_e, textvariable=self.var_e_n, width=7)
+        campo_n.pack(side="left", padx=6)
+        campo_n.bind("<Return>", lambda _: self.redibujar_especial())
+        campo_n.bind("<FocusOut>", lambda _: self.redibujar_especial())
+        ttk.Label(fila_e, text="(acepta decimales: 2, 2.5, 3...)",
+                  foreground="gray").pack(side="left")
+        self.var_e_imp = tk.BooleanVar(value=False)
+        self.var_e_may = tk.BooleanVar(value=False)
+        ttk.Checkbutton(fila_e, text="Incluir impacto", variable=self.var_e_imp,
+                        command=self.redibujar_especial).pack(side="left", padx=(14, 0))
+        ttk.Checkbutton(fila_e, text="Incluir mayoración", variable=self.var_e_may,
+                        command=self.redibujar_especial).pack(side="left", padx=(8, 0))
+        ttk.Label(fila_e, text="   Unidades:").pack(side="left")
+        self.var_unidad_e = tk.StringVar(value=gp.UNIDAD_DEFECTO)
+        cb_e = ttk.Combobox(fila_e, textvariable=self.var_unidad_e, state="readonly", width=16,
+                            values=list(gp.UNIDADES.keys()))
+        cb_e.pack(side="left", padx=6)
+        cb_e.bind("<<ComboboxSelected>>", lambda _: self.redibujar_especial())
+        ttk.Button(fila_e, text="Guardar PNG", command=self.exportar_png_especial).pack(side="right")
+        self.lbl_e_aviso = ttk.Label(tab_e, text="", foreground="gray", justify="left")
+        self.lbl_e_aviso.pack(anchor="w", pady=(2, 0))
+        self.figura_e = Figure(figsize=(9, 6.5))
+        self.lienzo_e = FigureCanvasTkAgg(self.figura_e, master=tab_e)
+        barra_e = NavigationToolbar2Tk(self.lienzo_e, tab_e, pack_toolbar=False)
+        barra_e.update()
+        barra_e.pack(side="bottom", fill="x")
+        self.lienzo_e.get_tk_widget().pack(fill="both", expand=True, pady=(4, 0))
+        libreta.add(tab_e, text="  Camión especial  ")
+
         # --- Resumen
         tab_r = ttk.Frame(libreta, padding=4)
         cab = ttk.Frame(tab_r)
@@ -1664,6 +1699,7 @@ class Aplicacion(tk.Tk):
         self.redibujar()
         self._actualizar_chks_pp_viga()
         self.redibujar_pp_viga()
+        self.redibujar_especial()
         self.llenar_resumen()
         self.llenar_tabla()
         self.txt.delete("1.0", "end")
@@ -1734,6 +1770,55 @@ class Aplicacion(tk.Tk):
         gp.figura_peso_propio_viga(self.resultados, self._activos_pp_viga(), fig=self.figura_pv,
                                    unidad=self.var_unidad_pv.get())
         self.lienzo_pv.draw()
+
+    def _vista_especial(self):
+        """(vista, n_vigas) del camión especial, o None con un aviso en pantalla."""
+        res = self.res_base
+        if res is None or "especial" not in res.base_viva:
+            self.figura_e.clear()
+            self.lienzo_e.draw()
+            self.lbl_e_aviso.configure(
+                text="Sin camión especial: marque «Incluirlo en la envolvente gobernante» "
+                     "en la tabla del camión especial y calcule.", foreground="gray")
+            return None
+        try:
+            n = parsear_num(self.var_e_n.get(), "Vigas que resisten el momento")
+        except ValueError as e:
+            self.lbl_e_aviso.configure(text=str(e), foreground="#a11")
+            return None
+        if n <= 0:
+            self.lbl_e_aviso.configure(text="El número de vigas debe ser mayor que cero.",
+                                       foreground="#a11")
+            return None
+        vista = res.con_factores(impacto=self.var_e_imp.get(), distribucion=False,
+                                 mayoracion=self.var_e_may.get())
+        self.lbl_e_aviso.configure(
+            text="Momento de una vía completa del camión especial dividido en partes iguales "
+                 "entre %g viga%s. Sin coeficiente de distribución." % (n, "" if n == 1 else "s"),
+            foreground="gray")
+        return vista, n
+
+    def redibujar_especial(self):
+        v = self._vista_especial() if hasattr(self, "figura_e") else None
+        if v is None:
+            return
+        gp.figura_especial_vigas(v[0], v[1], fig=self.figura_e, unidad=self.var_unidad_e.get())
+        self.lienzo_e.draw()
+
+    def exportar_png_especial(self):
+        v = self._vista_especial()
+        if v is None:
+            messagebox.showinfo(APP, "No hay un camión especial calculado.", parent=self)
+            return
+        ruta = filedialog.asksaveasfilename(
+            parent=self, defaultextension=".png", initialfile="Camion Especial por Viga.png",
+            filetypes=[("Imagen PNG", "*.png")])
+        if not ruta:
+            return
+        fig = gp.figura_especial_vigas(v[0], v[1], fig=Figure(figsize=(12, 9)),
+                                       unidad=self.var_unidad_e.get())
+        fig.savefig(ruta, dpi=300)
+        self.var_estado.set("Gráfico guardado: %s" % os.path.basename(ruta))
 
     def exportar_png_pp_viga(self):
         if self.resultados is None or not self.resultados.componentes_pp_viga:
